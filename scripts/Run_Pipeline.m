@@ -196,19 +196,23 @@ end
 
 
 function state = loadState(stateFile)
-    state = struct('completedSteps', cell(0, 2));
+    % Initialize as a scalar struct so state.completedSteps is always a single value.
+    state = struct();
+    state.completedSteps = cell(0, 2);
     if exist(stateFile, 'file')
         try
             loaded = load(stateFile, 'state');
             state = loaded.state;
-            % Ensure scalar struct so state.completedSteps is a single value (avoids comma-separated list)
+            % Normalize to scalar struct with completedSteps field.
             if isempty(state) || numel(state) ~= 1
-                state = struct('completedSteps', cell(0, 2));
+                state = struct();
+                state.completedSteps = cell(0, 2);
             elseif ~isfield(state, 'completedSteps')
                 state.completedSteps = cell(0, 2);
             end
         catch
-            state = struct('completedSteps', cell(0, 2));
+            state = struct();
+            state.completedSteps = cell(0, 2);
         end
     end
 end
