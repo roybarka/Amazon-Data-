@@ -1,19 +1,33 @@
-% reduced_form2matrix_PseudoScript_20241228.m is a pseudocode that constructs a generalized review matrix, with each row representing an individual review.
+function ok = reduced_form2matrix(cfg)
+% REDUCED_FORM2MATRIX  Build review matrix and row lookup from processed reduced-form .mat files.
+% Fully automated: no GUI. Uses config with Category -> File Type paths.
+%
+% cfg.categoryRoot, cfg.categoryName.
+% Reads: Processed_MAT_files/*_processed_*.mat. Writes: Matrix/*.mat, Matrix_Lookup/*.mat.
 
-clear all;
+ok = false;
+if nargin < 1 || ~isstruct(cfg)
+    error('reduced_form2matrix requires config struct cfg with categoryRoot, categoryName.');
+end
 
+paths = pipeline_getCategoryPaths(cfg.categoryRoot, cfg.categoryName);
+inputDir = paths.Processed_MAT_files;
+outputDir = paths.Matrix;
+lookupTabledir = paths.Matrix_Lookup;
+categoryName = cfg.categoryName;
+
+if ~exist(inputDir, 'dir'), mkdir(inputDir); end
+if ~exist(lookupTabledir, 'dir'), mkdir(lookupTabledir); end
 
 TIMEINF = datetime('01-OCT-2023');
-% Define the directory containing the original .mat files
-inputDir = 'F:\AmazonData_Part1Full\Categories\Automotive\Procceced_Mat_Files';
-outputDir = 'F:\AmazonData_Part1Full\Categories\Automotive\Matrix';
-lookupTabledir = 'F:\AmazonData_Part1Full\Categories\Automotive\MatrixLookUp';
 
-% Get a list of all .mat files in the input directory
 matFiles = dir(fullfile(inputDir, '*.mat'));
-
-% Extract numerical parts from filenames and sort
-fileNumbers = cellfun(@(x) sscanf(x, 'Automotive_processed_%d_%*d.mat'), {matFiles.name});
+pattern = [categoryName '_processed_%d_%*d.mat'];
+fileNumbers = zeros(1, numel(matFiles));
+for f = 1:numel(matFiles)
+    n = sscanf(matFiles(f).name, pattern);
+    if ~isempty(n), fileNumbers(f) = n(1); else, tok = regexp(matFiles(f).name, '\d+', 'match'); if ~isempty(tok), fileNumbers(f) = str2double(tok{1}); end; end
+end
 [~, sortIdx] = sort(fileNumbers);
 matFiles = matFiles(sortIdx);
 
@@ -354,5 +368,7 @@ end
        % Save Matrix
         %fprintf('%s starting to save %s\n', datetime("now"), outputMatrixName);
         save(outputFileName, 'combinedDataMatrix', '-v7.3');
-        fprintf('%s Saved Matrix to %s\n',datetime("now"), outputFileName);
+        fprintf('%s Saved Matrix to %s\n', datetime("now"), outputFileName);
+end
+ok = true;
 end

@@ -1,46 +1,53 @@
-% Amazon_meta_batch_chunked_log.m
-% Batch: read all META JSONL files and save each as .mat chunks (~1M records)
-% with progress logging and skip-existing logic
+function ok = Amazon_meta_data_script(cfg)
+% AMAZON_META_DATA_SCRIPT  Read meta_*.jsonl, save chunked .mat and category lookup.
+% Fully automated: no GUI. Uses config with Category -> File Type paths.
+%
+% cfg.categoryRoot, cfg.categoryName, cfg.metaJsonlFolder (folder containing meta_*.jsonl).
+% If metaJsonlFolder is empty or missing, returns ok = true without error (skip).
+% Writes: Meta_Data_Mat_files/*.mat, Meta_Data_LookUp_Table/*_Category_Lookup.mat.
 
-clear; clc;
-
-% --- Choose input folder (starts one level up, in Meta_Data) ---
-inputFolder = uigetdir('..\Meta_Data', 'Select the Meta_Data folder');
-if isequal(inputFolder,0)
-    error('No folder selected.');
-end
-fprintf('Input folder: %s\n', inputFolder);
-
-% --- Output folder (fixed path) ---
-outputFolder = 'G:\AmazonData\Meta_Data Mat_files';
-if ~exist(outputFolder, 'dir')
-    mkdir(outputFolder);
-end
-fprintf('Output folder: %s\n\n', outputFolder);
-
-% --- Lookup Table Setup ---
-lookupTableDir = 'G:\AmazonData\Meta_Data LookUp Table'; 
-if ~exist(lookupTableDir, 'dir')
-    mkdir(lookupTableDir);
+ok = false;
+if nargin < 1 || ~isstruct(cfg)
+    error('Amazon_meta_data_script requires config struct cfg.');
 end
 
+if ~isfield(cfg, 'metaJsonlFolder') || isempty(cfg.metaJsonlFolder) || ~exist(cfg.metaJsonlFolder, 'dir')
+    ok = true;
+    return;
+end
 
-% --- Logging setup ---
-logFile = fullfile(outputFolder, ...
-    sprintf('MetaDataLog_%s.txt', datestr(now,'yyyy-mm-dd_HH-MM-SS')));
-logFID = fopen(logFile,'a');
+inputFolder = cfg.metaJsonlFolder;
+paths = pipeline_getCategoryPaths(cfg.categoryRoot, cfg.categoryName);
+outputFolder = paths.Meta_Data_Mat_files;
+lookupTableDir = paths.Meta_Data_LookUp_Table;
+
+if ~exist(outputFolder, 'dir'), mkdir(outputFolder); end
+if ~exist(lookupTableDir, 'dir'), mkdir(lookupTableDir); end
+
+logFile = fullfile(outputFolder, sprintf('MetaDataLog_%s.txt', datestr(now,'yyyy-mm-dd_HH-MM-SS')));
+logFID = fopen(logFile, 'a');
 cleanupLog = onCleanup(@() fclose(logFID));
 
-fprintf(logFID, '=== Amazon MetaData Batch Run %s ===\n', datestr(now));
-fprintf(logFID, 'Input folder: %s\nOutput folder: %s\n\n', inputFolder, outputFolder);
+fprintf(logFID, '=== Amazon MetaData Run %s ===\n', datestr(now));
+fprintf(logFID, 'Input: %s\nOutput: %s\n\n', inputFolder, outputFolder);
 
-% --- File list ---
-files = dir(fullfile(inputFolder, 'meta_*.jsonl'));
+% When the folder contains meta_*.jsonl for many categories, only process the one for this category.
+categoryName = cfg.categoryName;
+expectedBaseName = ['meta_' categoryName];
+
+filesAll = dir(fullfile(inputFolder, 'meta_*.jsonl'));
+keep = false(size(filesAll));
+for ki = 1:numel(filesAll)
+    [~, bn] = fileparts(filesAll(ki).name);
+    keep(ki) = strcmp(bn, expectedBaseName);
+end
+files = filesAll(keep);
 if isempty(files)
-    error('No meta_*.jsonl files found in: %s', inputFolder);
+    fprintf('No %s.jsonl in %s. Skipping meta for category %s.\n', expectedBaseName, inputFolder, categoryName);
+    ok = true;
+    return;
 end
 
-% --- Process each file ---
 for k = 1:numel(files)
     inFile = fullfile(files(k).folder, files(k).name);
     [~, baseName] = fileparts(files(k).name);
@@ -49,11 +56,8 @@ for k = 1:numel(files)
     fprintf('(%d/%d) %s\n', k, numel(files), files(k).name);
     fprintf(logFID, '(%d/%d) %s\n', k, numel(files), files(k).name);
 
-    % Skip if output already exists
     if exist(outFile, 'file') || ~isempty(dir(fullfile(outputFolder, sprintf('%s_part*.mat', baseName))))
-        msg = sprintf('  -> exists, skipping: %s\n\n', outFile);
-        fprintf(msg);
-        fprintf(logFID, msg);
+        fprintf(logFID, '  -> exists, skipping\n\n');
         continue;
     end
 
@@ -65,100 +69,58 @@ for k = 1:numel(files)
             allCats = keys(categoryMap)';
             allIDs = values(categoryMap)';
             allIDs = cell2mat(allIDs);
-            
             categoryLookupTable = table(allIDs, allCats, 'VariableNames', {'unique_category_id', 'category'});
-            
-            % Generate unique filename using baseName
+            categoryLookupTable = sortrows(categoryLookupTable, 'unique_category_id');
             tableName = sprintf('%s_Category_Lookup.mat', baseName);
             saveFile = fullfile(lookupTableDir, tableName);
-            
             save(saveFile, 'categoryLookupTable');
-            
-            msg = sprintf('  -> Saved category table: %s (%d categories)\n', tableName, length(allIDs));
-            fprintf(msg);
-            fprintf(logFID, msg);
+            fprintf(logFID, '  -> Saved %s (%d categories)\n', tableName, length(allIDs));
         end
     catch ME
-        msg = sprintf('  !! failed: %s\n      %s\n\n', inFile, ME.message);
-        fprintf(2, msg);
-        fprintf(logFID, msg);
+        fprintf(2, '  !! failed: %s\n', ME.message);
+        fprintf(logFID, '  !! failed: %s\n\n', ME.message);
     end
 end
 
-% --- Save Category Lookup Table ---
-fprintf('Saving Category Lookup Table...\n');
-if ~isempty(categoryMap)
-    allCats = keys(categoryMap)';
-    allIDs = values(categoryMap)';
-    allIDs = cell2mat(allIDs); 
-    
-    categoryLookupTable = table(allIDs, allCats, 'VariableNames', {'unique_category_id', 'category'});
-    categoryLookupTable = sortrows(categoryLookupTable, 'unique_category_id');
-
-    tableName = sprintf('%s_Category_Lookup.mat', baseName);
-    saveFile = fullfile(lookupTableDir, tableName);
-    save(saveFile, 'categoryLookupTable');
-
-    fprintf('Category Lookup Table saved with %d unique categories.\n', length(allIDs));
-else
-    fprintf('No categories found to save.\n');
+fprintf(logFID, '=== Done at %s ===\n', datestr(now));
+ok = true;
 end
 
-fprintf('Done.\n');
-fprintf(logFID, '=== Done at %s ===\n', datestr(now));
 
-
-
-% =====================================================
-% Helper: parse JSONL file and save every 1M records
-% =====================================================
 function parse_and_save_chunked(inputFilePath, outputFolder, baseName, logFID, categoryMap)
-    % Open file
-    fid = fopen(inputFilePath, 'r','n','UTF-8');
+    fid = fopen(inputFilePath, 'r', 'n', 'UTF-8');
     if fid == -1
         error('Failed to open file: %s', inputFilePath);
     end
     cleanupObj = onCleanup(@() fclose(fid));
 
-    % Struct template
     emptyRec = struct( ...
-        'main_category', [], ...
-        'title', [], ...
-        'average_rating', [], ...
-        'rating_number', [], ...
-        'features', [], ...
-        'description', [], ...
-        'price', [], ...
-        'images', [], ...
-        'videos', [], ...
-        'store', [], ...
-        'categories', [], ...
-        'details', [], ...
-        'parent_asin', [], ...
-        'bought_together', [] ...        
-    );
+        'main_category', [], 'title', [], 'average_rating', [], 'rating_number', [], ...
+        'features', [], 'description', [], 'price', [], 'images', [], 'videos', [], ...
+        'store', [], 'categories', [], 'details', [], 'parent_asin', [], 'bought_together', []);
 
-    maxRecords = 1e6;          % records per chunk
+    maxRecords = 1e6;
     dataStruct = repmat(emptyRec, 0, 1);
     recCounter = 0;
     chunkCounter = 0;
 
-    fprintf('  -> parsing %s\n', inputFilePath);
     fprintf(logFID, '  -> parsing %s\n', inputFilePath);
 
     while ~feof(fid)
         line = fgetl(fid);
         if ~ischar(line), break; end
         if isempty(line), continue; end
-
         try
             rec = jsondecode(line);
         catch
-            continue;  % skip malformed line
+            continue;
+        end
+        % Skip if rec is not a scalar struct (e.g. empty struct array from [] or {})
+        if isempty(rec) || numel(rec) ~= 1
+            continue;
         end
 
         recCounter = recCounter + 1;
-
         tmp = emptyRec;
         tmp.main_category = safeField(rec,'main_category');
         tmp.title = safeField(rec,'title');
@@ -173,77 +135,50 @@ function parse_and_save_chunked(inputFilePath, outputFolder, baseName, logFID, c
         tmp.categories = safeField(rec,'categories');
         tmp.details = safeField(rec,'details');
         tmp.parent_asin = safeField(rec,'parent_asin');
-        tmp.bought_together = safeField(rec,'bought_together');       
+        tmp.bought_together = safeField(rec,'bought_together');
         dataStruct(end+1) = tmp; %#ok<SAGROW>
 
-        % --- Update Category Map ---
         if ~isempty(tmp.categories)
             currentCats = tmp.categories;
-            % Ensure format is a cell array of strings
-            if ischar(currentCats)
-                currentCats = {currentCats};
-            elseif isstring(currentCats)
-                currentCats = cellstr(currentCats);
-            end
-            
-            % Iterate through categories and add to map if new
+            if ischar(currentCats), currentCats = {currentCats}; elseif isstring(currentCats), currentCats = cellstr(currentCats); end
             for cIdx = 1:length(currentCats)
                 catStr = currentCats{cIdx};
                 if ~isKey(categoryMap, catStr)
-                    % Assign new ID based on current count
-                    newID = categoryMap.Count + 1;
-                    categoryMap(catStr) = newID;
+                    categoryMap(catStr) = categoryMap.Count + 1;
                 end
             end
         end
 
-        % Progress
         if mod(recCounter, 10000) == 0
-            msg = sprintf('    parsed %d records...\n', recCounter);
-            fprintf(msg);
-            fprintf(logFID, msg);
+            fprintf(logFID, '    parsed %d records...\n', recCounter);
         end
 
-        % Save and clear every million records
         if mod(recCounter, maxRecords) == 0
             chunkCounter = chunkCounter + 1;
             chunkOutFile = fullfile(outputFolder, sprintf('%s_part%d.mat', baseName, chunkCounter));
-            msg = sprintf('  -> saving chunk %d (%d records) at %s\n', ...
-                chunkCounter, numel(dataStruct), datestr(now,'yyyy-mm-dd HH:MM:SS'));
-            fprintf(msg);
-            fprintf(logFID, msg);
-
             partialDataStruct = dataStruct; %#ok<NASGU>
             save(chunkOutFile, 'partialDataStruct', '-v7.3');
-
-            msg = sprintf('  -> saved: %s\n', chunkOutFile);
-            fprintf(msg);
-            fprintf(logFID, msg);
-
-            dataStruct = repmat(emptyRec, 0, 1); % clear memory
+            fprintf(logFID, '  -> saved chunk %d\n', chunkCounter);
+            dataStruct = repmat(emptyRec, 0, 1);
         end
     end
 
-    % Save remaining records
     if ~isempty(dataStruct)
         chunkCounter = chunkCounter + 1;
         chunkOutFile = fullfile(outputFolder, sprintf('%s_part%d.mat', baseName, chunkCounter));
         partialDataStruct = dataStruct; %#ok<NASGU>
         save(chunkOutFile, 'partialDataStruct', '-v7.3');
-
-        msg = sprintf('  -> saved final chunk %d (%d records)\n', ...
-            chunkCounter, numel(dataStruct));
-        fprintf(msg);
-        fprintf(logFID, msg);
+        fprintf(logFID, '  -> saved final chunk %d\n', chunkCounter);
     end
-
-    msg = sprintf('  Total records parsed: %d\n\n', recCounter);
-    fprintf(msg);
-    fprintf(logFID, msg);
+    fprintf(logFID, '  Total records: %d\n\n', recCounter);
 end
 
 
 function val = safeField(rec, fieldName)
+    if isempty(rec) || numel(rec) ~= 1
+        val = [];
+        return;
+    end
     if isfield(rec, fieldName)
         val = rec.(fieldName);
     else

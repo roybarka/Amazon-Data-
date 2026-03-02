@@ -1,24 +1,38 @@
-% MATLAB script to read JSONL file, process data, and save in chunks
-clear
+function ok = Amazon_data_script(cfg)
+% AMAZON_DATA_SCRIPT  Read JSONL file, process data, save chunked .mat and lookup table.
+% Fully automated: no GUI. Uses config struct with Category -> File Type paths.
+%
+% cfg.categoryRoot   - root containing category folders (e.g. 'F:\Amazon_data Part 2')
+% cfg.categoryName   - category folder name (e.g. 'Digital_Music')
+% cfg.jsonlFilePath  - full path to the .jsonl review file (required)
+% cfg.chunkSize     - (optional) items per chunk; default 10000
+%
+% Output: Mat_Files/*.mat and LookUp_Table/<Category>LookUpTable.mat under category folder.
 
-% File paths
-[filename, filepath] = uigetfile('*.jsonl', 'Select the JSONL file');
-
-% Check if the user canceled the selection
-if isequal(filename, 0)
-    error('No file selected. Please select a valid JSONL file.');
-else
-    inputFilePath = fullfile(filepath, filename); % Combine the folder and file name
-    fprintf('Selected file: %s\n', inputFilePath);
+ok = false;
+if nargin < 1 || ~isstruct(cfg)
+    error('Amazon_data_script requires a config struct cfg with categoryRoot, categoryName, jsonlFilePath.');
 end
 
-outputFileName = 'F:\Roy\Amazon_data\Mat_files\Home_and_Kitchen\Home_and_Kitchen'; % Base name for output .mat files
-lookupTableFileName = 'F:\Roy\Amazon_data\LookUp Table\Home_and_KitchenLookUpTable.mat'; % File name for the lookup table
+categoryRoot = cfg.categoryRoot;
+categoryName = cfg.categoryName;
+inputFilePath = cfg.jsonlFilePath;
+if isempty(inputFilePath) || ~exist(inputFilePath, 'file')
+    error('cfg.jsonlFilePath must be a valid path to a .jsonl file.');
+end
 
-% Parameters
-chunkSize = 10000; % Number of items per chunk
+paths = pipeline_getCategoryPaths(categoryRoot, categoryName);
+if ~exist(paths.Mat_Files, 'dir'), mkdir(paths.Mat_Files); end
+if ~exist(paths.LookUp_Table, 'dir'), mkdir(paths.LookUp_Table); end
 
-% Initialize variables
+outputFileName = paths.matFilesBaseName;  % base name for output .mat files
+lookupTableFileName = paths.lookupTableFile;
+
+chunkSize = 10000;
+if isfield(cfg, 'chunkSize') && isnumeric(cfg.chunkSize) && cfg.chunkSize > 0
+    chunkSize = cfg.chunkSize;
+end
+
 asinSet = containers.Map('KeyType', 'char', 'ValueType', 'logical');
 asinIndexMap = containers.Map('KeyType', 'char', 'ValueType', 'double');
 lookupTable = containers.Map('KeyType', 'double', 'ValueType', 'char');
@@ -26,26 +40,20 @@ counter = 0;
 uniqueIDCounter = 0;
 ratingAdded = true;
 fid = fopen(inputFilePath, 'r');
+if fid == -1
+    error('Failed to open file: %s', inputFilePath);
+end
+cleanupFid = onCleanup(@() fclose(fid));
 
-
-% % for starting with saved workspace , put in comment all the above code and use this:
-% counter = counter -1 ;
-% ratingAdded = true;
-% fid = fopen(inputFilePath, 'r');
-
-
-% Loop through the file and process in chunks
 while ratingAdded
     dataStruct = struct('ratings', {}, 'titles', {}, 'texts', {}, 'timestamps', {}, 'parent_asins', {}, 'user_ids', {}, 'verified_purchases', {}, 'helpful_votes', {}, 'images', {}, 'asins', {}, 'unique_ids', {});
     asinIndexMap = containers.Map('KeyType', 'char', 'ValueType', 'double');
     ratingAdded = false;
     counter = counter + 1;
 
-    % Rewind the file to the beginning
     fseek(fid, 0, 'bof');
     iteration_counter = 0;
-    
-    % Read lines from the file
+
     while ~feof(fid)
         line = fgetl(fid);
         if line == -1
@@ -60,7 +68,7 @@ while ratingAdded
             dataStruct(idx).ratings(end+1) = data.rating;
             dataStruct(idx).titles{end+1} = data.title;
             dataStruct(idx).texts{end+1} = data.text;
-            dataStruct(idx).timestamps(end+1) = data.timestamp / 1000; % Convert to seconds
+            dataStruct(idx).timestamps(end+1) = data.timestamp / 1000;
             dataStruct(idx).user_ids{end+1} = data.user_id;
             dataStruct(idx).verified_purchases(end+1) = data.verified_purchase;
             dataStruct(idx).helpful_votes(end+1) = data.helpful_vote;
@@ -82,11 +90,10 @@ while ratingAdded
             dataStruct(idx).images = {data.images};
             dataStruct(idx).asins = asin;
             dataStruct(idx).unique_ids = uniqueIDCounter;
-            lookupTable(uniqueIDCounter) = asin; % Add to lookup table
+            lookupTable(uniqueIDCounter) = asin;
         end
     end
-    
-    % Sort each asin by timestamp
+
     for k = 1:length(dataStruct)
         [~, sortIdx] = sort(dataStruct(k).timestamps);
         dataStruct(k).ratings = dataStruct(k).ratings(sortIdx);
@@ -98,23 +105,21 @@ while ratingAdded
         dataStruct(k).helpful_votes = dataStruct(k).helpful_votes(sortIdx);
         dataStruct(k).images = dataStruct(k).images(sortIdx);
     end
-    
-    if ~isempty(dataStruct)  % Ensure there is data to save
+
+    if ~isempty(dataStruct)
         startIdx = (counter - 1) * chunkSize + 1;
         endIdx = startIdx + chunkSize - 1;
         saveFileName = sprintf('%s%d_%d.mat', outputFileName, startIdx, endIdx);
-        fprintf('starting to save %s at %s. num of revies is: %d\n', saveFileName, datetime("now"), iteration_counter);
+        fprintf('Saving %s at %s (reviews: %d)\n', saveFileName, char(datetime("now")), iteration_counter);
         save(saveFileName, 'dataStruct', '-v7.3');
-        fprintf('Saved %s at %s.\n', saveFileName, datetime("now"));
     end
 end
 
-% Save the lookup table
 lookupTableKeys = keys(lookupTable);
 lookupTableValues = values(lookupTable);
 lookupTableStruct = struct('unique_id', lookupTableKeys, 'asin', lookupTableValues);
 save(lookupTableFileName, 'lookupTableStruct', '-v7.3');
 fprintf('Saved lookup table %s\n', lookupTableFileName);
 
-% Close the file
-fclose(fid);
+ok = true;
+end

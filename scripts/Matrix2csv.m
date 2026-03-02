@@ -1,20 +1,30 @@
-%% script to convert Matrix .mat fiels to .csv files
-% Prompt user to select the input directory containing .mat files
-clear;
-inputDir = uigetdir('', 'Select the folder containing .mat files');
-outputDir = 'F:\AmazonData_Part1Full\Categories\Automotive\Matrix_CSV';
-if inputDir == 0
-    error('No directory selected. Exiting script.');
+function ok = Matrix2csv(cfg)
+% MATRIX2CSV  Convert Matrix .mat files to .csv with column headers.
+% Fully automated: no GUI. Uses config with Category -> File Type paths.
+%
+% cfg.categoryRoot, cfg.categoryName.
+% Reads: Matrix/*.mat. Writes: Matrix_CSV/*.csv.
+
+ok = false;
+if nargin < 1 || ~isstruct(cfg)
+    error('Matrix2csv requires config struct cfg with categoryRoot, categoryName.');
 end
 
-% Get a list of all .mat files in the directory
-matFiles = dir(fullfile(inputDir, '*.mat'));
+paths = pipeline_getCategoryPaths(cfg.categoryRoot, cfg.categoryName);
+inputDir = paths.Matrix;
+outputDir = paths.Matrix_CSV;
 
-% Define output directory (same as input or create a "CSV_Output" folder)
-% outputDir = fullfile(outputDir, 'Matrix_CSV','Home_and_Kitchen');
-% if ~exist(outputDir, 'dir')
-%     mkdir(outputDir);
-% end
+if ~exist(inputDir, 'dir')
+    error('Matrix directory does not exist: %s', inputDir);
+end
+if ~exist(outputDir, 'dir'), mkdir(outputDir); end
+
+matFiles = dir(fullfile(inputDir, '*.mat'));
+if isempty(matFiles)
+    fprintf('No .mat files in %s. Skipping.\n', inputDir);
+    ok = true;
+    return;
+end
 
 columnNames = {'Unique id','Total previous reviews within 0 days','Total previous reviews within 1 days','Total previous reviews within 2 days',...
     'Total previous reviews within 3 days','Total previous reviews within 4 days','Total previous reviews within 5 days',...
@@ -47,33 +57,23 @@ columnNames = {'Unique id','Total previous reviews within 0 days','Total previou
     'delta time OutOf 3 dayWindow', 'delta time OutOf 4 dayWindow', 'delta time OutOf 5 dayWindow', 'delta time OutOf 6 dayWindow', ...
     'delta time OutOf 7 dayWindow', 'rating', 'verified purchases', 'helpful votes','text_size', 'year', 'mounth', 'day', 'weekday',...
     'is censored?', 'consored row', 'total num of reviews', 'launch year'
-    };
+};
 
-% Process each .mat file
 for i = 1:length(matFiles)
-    % Construct full file path
     matFilePath = fullfile(inputDir, matFiles(i).name);
     fprintf('Processing: %s\n', matFilePath);
-    
-    % Load .mat file data
+
     dataStruct = load(matFilePath);
-    
-    % Extract the first (and only) field, assuming it's a table
     fieldNames = fieldnames(dataStruct);
     mainData = dataStruct.(fieldNames{1});
-    
 
-    % Construct CSV filename (same name as .mat but with .csv extension)
     [~, name, ~] = fileparts(matFiles(i).name);
     csvFileName = fullfile(outputDir, [name, '.csv']);
-
-    % Write column headers first
     writecell(columnNames, csvFileName);
-
-    % Write table to CSV with column headers
-    writematrix(mainData, csvFileName,'WriteMode', 'append');
-
+    writematrix(mainData, csvFileName, 'WriteMode', 'append');
     fprintf('Saved CSV: %s\n', csvFileName);
 end
 
-fprintf('Conversion complete. All CSV files are in: %s\n', outputDir);
+fprintf('Conversion complete. All CSV files in: %s\n', outputDir);
+ok = true;
+end
