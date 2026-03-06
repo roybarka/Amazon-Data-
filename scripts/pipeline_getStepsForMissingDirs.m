@@ -41,13 +41,15 @@ if ~matEmpty && procEmpty
     stepsToRun{end+1} = struct('name', 'reduced_form_script_10000', 'fillsDir', 'Processed_MAT_files', 'requiresInput', '');
 end
 
-% Step 3: Matrix + Matrix_Lookup
-if ~procEmpty && matrixEmpty
+% Step 3: Matrix + Matrix_Lookup (add if Matrix empty and we have or will have Processed)
+willHaveProcessed = ~procEmpty || (~matEmpty && procEmpty);
+if matrixEmpty && willHaveProcessed
     stepsToRun{end+1} = struct('name', 'reduced_form2matrix', 'fillsDir', 'Matrix', 'requiresInput', '');
 end
 
-% Step 4: Matrix -> CSV
-if ~matrixEmpty && csvEmpty
+% Step 4: Matrix -> CSV (add if Matrix_CSV empty and we have or will have Matrix)
+willHaveMatrix = ~matrixEmpty || (matrixEmpty && willHaveProcessed);
+if csvEmpty && willHaveMatrix
     stepsToRun{end+1} = struct('name', 'Matrix2csv', 'fillsDir', 'Matrix_CSV', 'requiresInput', '');
 end
 
@@ -56,19 +58,21 @@ if metaMatEmpty
     stepsToRun{end+1} = struct('name', 'Amazon_meta_data_script', 'fillsDir', 'Meta_Data_Mat_files', 'requiresInput', 'metaJsonlFolder');
 end
 
-% Step 6: Enriched lookup (requires base LookUp + Category Lookup + Meta_Data_Mat_files; run before sparse)
+% Step 6: Enriched lookup (requires base LookUp + Category Lookup + Meta_Data_Mat_files; add if we have or will have both)
 enrichedExists = exist(paths.lookupTableEnrichedFile, 'file');
 categoryLookupExists = exist(paths.metaCategoryLookupFile, 'file');
 metaPartFiles = dir(fullfile(paths.Meta_Data_Mat_files, ['meta_' categoryName '_part*.mat']));
 metaPartsExist = ~isempty(metaPartFiles);
-if lookupExists && categoryLookupExists && metaPartsExist && ~enrichedExists
+willHaveMetaAndCatLookup = (categoryLookupExists && metaPartsExist) || metaMatEmpty;
+if lookupExists && ~enrichedExists && willHaveMetaAndCatLookup
     stepsToRun{end+1} = struct('name', 'Enrich_Lookup_Table', 'fillsDir', 'LookUp_Table', 'requiresInput', '');
 end
 
 % Step 7: Sparse matrix (requires Enriched + Category Lookup; add if Enriched exists or will be created this run)
 sparseMatrixExists = exist(paths.sparseMatrixFile, 'file');
-enrichedWillExist = enrichedExists || (lookupExists && categoryLookupExists && metaPartsExist && ~enrichedExists);
-if categoryLookupExists && ~sparseMatrixExists && enrichedWillExist
+enrichedWillExist = enrichedExists || (lookupExists && ~enrichedExists && willHaveMetaAndCatLookup);
+willHaveCategoryLookup = categoryLookupExists || metaMatEmpty;
+if ~sparseMatrixExists && enrichedWillExist && willHaveCategoryLookup
     stepsToRun{end+1} = struct('name', 'generate_category_sparse_matrix', 'fillsDir', 'Asin_Category_Matrix', 'requiresInput', '');
 end
 end
